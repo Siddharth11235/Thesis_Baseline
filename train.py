@@ -1,23 +1,19 @@
 import os
 from argparse import ArgumentParser
+import test as tst
 import gan as md
 from utils import create_link
-import test as tst
-
 
 # To get arguments from commandline
 def get_args():
-	parser = ArgumentParser(description='cycleRandGAN PyTorch')
+	parser = ArgumentParser()
 	parser.add_argument('--epochs', type=int, default=5)
 	parser.add_argument('--decay_epoch', type=int, default=1)
-	parser.add_argument('--batch_size', type=int, default=1)
-	parser.add_argument('--lr', type=float, default=.0002)
-	parser.add_argument('--load_height', type=int, default=286)
-	parser.add_argument('--load_width', type=int, default=286)
-	parser.add_argument('--gpu_ids', type=str, default='0')
-	parser.add_argument('--crop_height', type=int, default=256)
-	parser.add_argument('--crop_width', type=int, default=256)
+	parser.add_argument('--batch_size', type=int, default=8)
 	parser.add_argument('--lamda', type=int, default=10)
+	parser.add_argument('--lr', type=float, default=.02)
+	parser.add_argument('--gpu_ids', type=str, default='0')
+	parser.add_argument("--seq_len", type=int, default=8192)
 	parser.add_argument('--idt_coef', type=float, default=0.5)
 	parser.add_argument('--training', type=bool, default=False)
 	parser.add_argument('--testing', type=bool, default=False)
@@ -26,10 +22,17 @@ def get_args():
 	parser.add_argument('--checkpoint_dir', type=str, default='./checkpoints/')
 	parser.add_argument('--norm', type=str, default='instance', help='instance normalization or batch normalization')
 	parser.add_argument('--no_dropout', action='store_true', help='no dropout for the generator')
-	parser.add_argument('--ngf', type=int, default=64, help='# of gen filters in first conv layer')
-	parser.add_argument('--ndf', type=int, default=64, help='# of discrim filters in first conv layer')
-	parser.add_argument('--gen_net', type=str, default='resnet_9blocks')
-	parser.add_argument('--dis_net', type=str, default='n_layers')
+	parser.add_argument("--ngf", type=int, default=32)
+	parser.add_argument("--n_residual_layers", type=int, default=3)
+	parser.add_argument("--sr", type=int, default=22050)
+    
+	parser.add_argument("--n_mel_channels", type=int, default=80)
+
+	parser.add_argument("--ndf", type=int, default=16)
+	parser.add_argument("--num_D", type=int, default=3)
+	parser.add_argument("--n_layers_D", type=int, default=4)
+	parser.add_argument("--downsamp_factor", type=int, default=4)
+	parser.add_argument('--n_bins', type=int, default=84)
 
 	args = parser.parse_args()
 	return args
@@ -54,7 +57,6 @@ def main():
 	if args.testing:
 		print("Testing")
 		tst.test(args)
-
 
 if __name__ == '__main__':
 	main()

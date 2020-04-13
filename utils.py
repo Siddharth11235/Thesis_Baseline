@@ -1,9 +1,11 @@
 import numpy as np
 import matplotlib as plt
 import librosa
+from librosa.core import load
 import os
 import torch
 import torchaudio
+import copy
 
 def mkdir(paths):
 	for path in paths:
@@ -39,9 +41,11 @@ def create_link(dataset_dir):
 	return dirs
 
 def mp3_spec(filename):
-	x, sr = librosa.load(filename + ".mp3")
-	S = librosa.stft(x, 512)
-	p = np.angle(S)
+	x, sr = load(filename)
+	S = librosa.cqt(x, sr=sr, hop_length=512, fmin=None, n_bins=84, bins_per_octave=12, tuning=0.0, filter_scale=1, norm=1, sparsity=0.01, window='hann', scale=True, pad_mode='reflect', res_type=None)
+
+	S = np.abs(S)
+	return S, sr
 
 	S = np.log1p(np.abs(S))
 	return S, sr
@@ -149,3 +153,11 @@ class LambdaLR():
 	def step(self, epoch):
 		return 1.0 - max(0, epoch + self.offset - self.decay_epoch)/(self.epochs - self.decay_epoch)
 
+
+def save_checkpoint(state, save_path):
+	torch.save(state, save_path)
+
+def load_checkpoint(ckpt_path, map_location=None):
+	ckpt = torch.load(ckpt_path, map_location=map_location)
+	print(' [*] Loading checkpoint from %s succeed!' % ckpt_path)
+	return ckpt
