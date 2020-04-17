@@ -40,15 +40,19 @@ def create_link(dataset_dir):
 
 	return dirs
 
-def mp3_spec(filename):
+def mp3_spec_file(filename):
 	x, sr = load(filename)
-	S = librosa.cqt(x, sr=sr, hop_length=512, fmin=None, n_bins=84, bins_per_octave=12, tuning=0.0, filter_scale=1, norm=1, sparsity=0.01, window='hann', scale=True, pad_mode='reflect', res_type=None)
-
-	S = np.abs(S)
-	return S, sr
+	S = librosa.stft(x, N_FFT)
+	p = np.angle(S)
 
 	S = np.log1p(np.abs(S))
 	return S, sr
+
+def mp3_spec(x):
+	S =librosa.cqt(x.numpy(), sr=22050)
+	S = np.abs(S)
+	S = np.log1p(S)
+	return torch.from_numpy(S).float().cuda()
 
 
 def normalize(tensor):

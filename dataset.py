@@ -11,6 +11,8 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 import pandas as pd
+import utils
+import torchaudio
 
 
 
@@ -111,12 +113,17 @@ if __name__ == '__main__':
 
 	dataloader = DataLoader(
 		AudioTransformSet("./Baseline_Data/Content/Joni_Mitchell/files.txt", "./Baseline_Data/Content/Nancy_Sinatra/files.txt", 8192, 22050, augment=True))
-	print (len(dataloader))
 
 	for index, data in enumerate(dataloader):
-		print (data[1])
+		
+		specgram = torchaudio.transforms.Spectrogram()(data[1])
 
-		plt.imshow(data[0].numpy()[0, :, :])
+		print("Shape of spectrogram: {}".format(specgram.size()))
+		print(specgram.size())
+
+		plt.figure()
+		plt.imshow(specgram.log2()[:,:,:].numpy())
+
 		plt.show()
 
 		if index == 0:
