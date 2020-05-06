@@ -7,13 +7,14 @@ from utils import create_link
 # To get arguments from commandline
 def get_args():
 	parser = ArgumentParser()
-	parser.add_argument('--epochs', type=int, default=5)
+	parser.add_argument('--epochs', type=int, default=50)
+	parser.add_argument('--loss', type=str, default='lsgan')
 	parser.add_argument('--decay_epoch', type=int, default=1)
-	parser.add_argument('--batch_size', type=int, default=8)
+	parser.add_argument('--batch_size', type=int, default=4)
 	parser.add_argument('--lamda', type=int, default=10)
-	parser.add_argument('--lr', type=float, default=.0002)
+	parser.add_argument('--lr', type=float, default=.02)
 	parser.add_argument('--gpu_ids', type=str, default='0')
-	parser.add_argument("--seq_len", type=int, default=8192)
+	parser.add_argument("--seq_len", type=int, default=88200)
 	parser.add_argument('--idt_coef', type=float, default=0.5)
 	parser.add_argument('--training', type=bool, default=False)
 	parser.add_argument('--testing', type=bool, default=False)
@@ -30,12 +31,11 @@ def get_args():
     
 	parser.add_argument("--n_mel_channels", type=int, default=80)
 
-	parser.add_argument("--ndf", type=int, default=16)
+	parser.add_argument("--ndf", type=int, default=32)
 	parser.add_argument("--num_D", type=int, default=3)
 	parser.add_argument("--n_layers_D", type=int, default=2)
 	parser.add_argument("--downsamp_factor", type=int, default=4)
 	parser.add_argument('--n_bins', type=int, default=84)
-
 	args = parser.parse_args()
 	return args
 
@@ -59,7 +59,7 @@ def main():
 	if args.testing:
 		print("Testing")
 		model = md.cycleRandGAN(args)
-		model.test(args)
+		model.validation_for_A_dir()
 
 if __name__ == '__main__':
 	main()

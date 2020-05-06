@@ -1,19 +1,11 @@
-import torch
-import torch.utils.data
-import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-
-from librosa.core import load
-from librosa.util import normalize
-
-from pathlib import Path
+import librosa
 import numpy as np
-import random
-import matplotlib.pyplot as plt
-import pandas as pd
-import utils
-import torchaudio
-
+import os
+import pyworld
+from pprint import pprint
+import librosa.display
+import time
+from pathlib import Path
 
 
 def files_to_list(filename):
@@ -26,108 +18,197 @@ def files_to_list(filename):
 	files = [f.rstrip() for f in files]
 	return files
 
-# Ignore warnings
-import warnings
-warnings.filterwarnings("ignore")
 
-plt.ion()   # interactive mode
+def load_wavs(wav_dir, sr):
+	files = files_to_list(wav_dir+"files.txt")
+	files = [Path(wav_dir+"files.txt").parent / x for x in files]
 
-song_frame = pd.read_csv('data/content.csv')
-csv_file = 'data/content.csv'
-
-
-class AudioTransformSet(Dataset):
-	"""Audio transform dataset.
-
-	This is the main class that calculates the spectrogram and returns the
-	spectrogram, audio pair.
-	"""
-
-	def __init__(self, content_files, style_files, segment_length, sampling_rate, augment=True):
-		self.sampling_rate = sampling_rate
-		self.segment_length = segment_length
-		self.content_files = files_to_list(content_files)
-		self.content_files = [Path(content_files).parent / x for x in self.content_files]
-		
-		self.style_files = files_to_list(style_files)
-		self.style_files = [Path(style_files).parent / x for x in self.style_files]			
-
-		random.seed(1234)
-		random.shuffle(self.content_files)
-		self.augment = augment
-
-	def __getitem__(self, index):
-		# Read content
-		con_filename = self.content_files[index]
-		content, sampling_rate = self.load_wav_to_torch(con_filename)
-		# Take content segment
-		if content.size(0) >= self.segment_length:
-			max_content_start = content.size(0) - self.segment_length
-			content_start = random.randint(0, max_content_start)
-			content = content[content_start : content_start + self.segment_length]
-		else:
-			content = F.pad(
-				content, (0, self.segment_length - content.size(0)), "constant").data
-
-		# audio = audio / 32768.0
-
-		# Read style
-		style_filename = self.style_files[index]
-		style, sampling_rate = self.load_wav_to_torch(style_filename)
-		# Take content segment
-		if style.size(0) >= self.segment_length:
-			max_style_start = style.size(0) - self.segment_length
-			style_start = random.randint(0, max_style_start)
-			style = style[style_start : style_start + self.segment_length]
-		else:
-			style = F.pad(
-				style, (0, self.segment_length - style.size(0)), "constant"
-			).data
-
-		# audio = audio / 32768.0
+	wavs = list()
+	breaker = 0
+	for file in files:
+		breaker+=1
+		if breaker < 300:
+			wav, _ = librosa.load(file, sr=sr)
+			# wav = wav.astype(np.float64)
+			wavs.append(wav)
+	return wavs
 
 
-		return content.unsqueeze(0), style.unsqueeze(0)
+def world_decompose(wav, fs, frame_period=5.0):
+	# Decompose speech signal into f0, spectral envelope and aperiodicity using WORLD
+	wav = wav.astype(np.float64)
+	f0, timeaxis = pyworld.harvest(wav, fs, frame_period=frame_period, f0_floor=71.0, f0_ceil=800.0)
 
-	def __len__(self):
-		return len(self.content_files)
+	# Finding Spectogram
+	sp = pyworld.cheaptrick(wav, f0, timeaxis, fs)
 
-	def load_wav_to_torch(self, con_path):
-		"""
-		Loads wavdata into torch array
-		"""
-		con_data, sampling_rate = load(con_path, sr=self.sampling_rate)
-		con_data = 0.95 * normalize(con_data)
+	# Finding aperiodicity
+	ap = pyworld.d4c(wav, f0, timeaxis, fs)
 
-		if self.augment:
-			amplitude = np.random.uniform(low=0.3, high=1.0)
-			con_data = con_data * amplitude
+	# Use this in Ipython to see plot
+	# librosa.display.specshow(np.log(sp).T,
+	#						  sr=fs,
+	#						  hop_length=int(0.001 * fs * frame_period),
+	#						  x_axis="time",
+	#						  y_axis="linear",
+	#						  cmap="magma")
+	# colorbar()
+	return f0, timeaxis, sp, ap
 
-		return torch.from_numpy(con_data).float(), sampling_rate
 
+def world_encode_spectral_envelop(sp, fs, dim=24):
+	# Get Mel-Cepstral coefficients (MCEPs)
+	# sp = sp.astype(np.float64)
+	coded_sp = pyworld.code_spectral_envelope(sp, fs, dim)
+	return coded_sp
+
+
+def world_encode_data(wave, fs, frame_period=5.0, coded_dim=24):
+	f0s = list()
+	timeaxes = list()
+	sps = list()
+	aps = list()
+	coded_sps = list()
+	breaker = 0
+	for wav in wave:
+		breaker+=1
+		if breaker < 300: #To handle problems with RAM and everything
+			f0, timeaxis, sp, ap = world_decompose(wav=wav,
+												   fs=fs,
+												   frame_period=frame_period)
+			coded_sp = world_encode_spectral_envelop(sp=sp, fs=fs, dim=coded_dim)
+			f0s.append(f0)
+			timeaxes.append(timeaxis)
+			sps.append(sp)
+			aps.append(ap)
+			coded_sps.append(coded_sp)
+	return f0s, timeaxes, sps, aps, coded_sps
+
+
+def logf0_statistics(f0s):
+	# Note: np.ma.log() calculating log on masked array (for incomplete or invalid entries in array)
+	log_f0s_concatenated = np.ma.log(np.concatenate(f0s))
+	log_f0s_mean = log_f0s_concatenated.mean()
+	log_f0s_std = log_f0s_concatenated.std()
+	return log_f0s_mean, log_f0s_std
+
+
+def transpose_in_list(lst):
+	transposed_lst = list()
+	for array in lst:
+		transposed_lst.append(array.T)
+	return transposed_lst
+
+
+def coded_sps_normalization_fit_transform(coded_sps):
+	coded_sps_concatenated = np.concatenate(coded_sps, axis=1)
+	coded_sps_mean = np.mean(coded_sps_concatenated, axis=1, keepdims=True)
+	coded_sps_std = np.std(coded_sps_concatenated, axis=1, keepdims=True)
+	coded_sps_normalized = list()
+	for coded_sp in coded_sps:
+		coded_sps_normalized.append(
+			(coded_sp - coded_sps_mean) / coded_sps_std)
+	return coded_sps_normalized, coded_sps_mean, coded_sps_std
+
+
+def wav_padding(wav, sr, frame_period, multiple=4):
+
+	assert wav.ndim == 1
+	num_frames = len(wav)
+	num_frames_padded = int((np.ceil((np.floor(num_frames / (sr * frame_period / 1000)) +
+									  1) / multiple + 1) * multiple - 1) * (sr * frame_period / 1000))
+	num_frames_diff = num_frames_padded - num_frames
+	num_pad_left = num_frames_diff // 2
+	num_pad_right = num_frames_diff - num_pad_left
+	wav_padded = np.pad(wav, (num_pad_left, num_pad_right),
+						'constant', constant_values=0)
+
+	return wav_padded
+
+
+def pitch_conversion(f0, mean_log_src, std_log_src, mean_log_target, std_log_target):
+
+	# Logarithm Gaussian Normalization for Pitch Conversions
+	f0_converted = np.exp((np.log(f0) - mean_log_src) /
+						  std_log_src * std_log_target + mean_log_target)
+	return f0_converted
+
+	
+
+def world_decode_spectral_envelop(coded_sp, fs):
+	fftlen = pyworld.get_cheaptrick_fft_size(fs)
+	decoded_sp = pyworld.decode_spectral_envelope(coded_sp, fs, fftlen)
+	return decoded_sp
+
+
+def world_speech_synthesis(f0, decoded_sp, ap, fs, frame_period):
+	wav = pyworld.synthesize(f0, decoded_sp, ap, fs, frame_period)
+	wav = wav.astype(np.float32)
+	return wav
+
+
+def sample_train_data(dataset_A, dataset_B, n_frames=128):
+	# Created Pytorch custom dataset instead
+	num_samples = min(len(dataset_A), len(dataset_B))
+	train_data_A_idx = np.arange(len(dataset_A))
+	train_data_B_idx = np.arange(len(dataset_B))
+	np.random.shuffle(train_data_A_idx)
+	np.random.shuffle(train_data_B_idx)
+	train_data_A_idx_subset = train_data_A_idx[:num_samples]
+	train_data_B_idx_subset = train_data_B_idx[:num_samples]
+
+	train_data_A = list()
+	train_data_B = list()
+
+	for idx_A, idx_B in zip(train_data_A_idx_subset, train_data_B_idx_subset):
+		data_A = dataset_A[idx_A]
+		frames_A_total = data_A.shape[1]
+		assert frames_A_total >= n_frames
+		start_A = np.random.randint(frames_A_total - n_frames + 1)
+		end_A = start_A + n_frames
+		train_data_A.append(data_A[:, start_A:end_A])
+
+		data_B = dataset_B[idx_B]
+		frames_B_total = data_B.shape[1]
+		assert frames_B_total >= n_frames
+		start_B = np.random.randint(frames_B_total - n_frames + 1)
+		end_B = start_B + n_frames
+		train_data_B.append(data_B[:, start_B:end_B])
+
+	train_data_A = np.array(train_data_A)
+	train_data_B = np.array(train_data_B)
+
+	return train_data_A, train_data_B
 
 
 if __name__ == '__main__':
-	import matplotlib.pyplot as plt
-	
+	start_time = time.time()
+	wavs = load_wavs("./Baseline_Data/Joni_Mitchell/", 16000)
+	# pprint(wavs)
 
-	dataloader = DataLoader(
-		AudioTransformSet("./Baseline_Data/Content/Joni_Mitchell/files.txt", "./Baseline_Data/Content/Nancy_Sinatra/files.txt", 8192, 22050, augment=True))
+	f0, timeaxis, sp, ap = world_decompose(wavs[0], 16000, 5.0)
+	print(f0.shape, timeaxis.shape, sp.shape, ap.shape)
 
-	for index, data in enumerate(dataloader):
-		
-		specgram = torchaudio.transforms.Spectrogram()(data[1])
+	coded_sp = world_encode_spectral_envelop(sp, 16000, 24)
+	print(coded_sp.shape)
 
-		print("Shape of spectrogram: {}".format(specgram.size()))
-		print(specgram.size())
+	f0s, timeaxes, sps, aps, coded_sps = world_encode_data(wavs, 16000, 5, 24)
+	# print(f0s)
 
-		plt.figure()
-		plt.imshow(specgram.log2()[:,:,:].numpy())
+	log_f0_mean, log_f0_std = logf0_statistics(f0s)
+	# print(log_f0_mean)
 
-		plt.show()
+	coded_sps_transposed = transpose_in_list(lst=coded_sps)
+	# print(coded_sps_transposed)
 
-		if index == 0:
-			break
+	coded_sps_norm, coded_sps_mean, coded_sps_std = coded_sps_normalization_fit_transform(
+		coded_sps=coded_sps_transposed)
+	print(
+		"Total time for preprcessing-> {:.4f}".format(time.time() - start_time))
 
+	print(len(coded_sps_norm), coded_sps_norm[0].shape)
+	temp_A = np.random.randn(162, 24, 550)
+	temp_B = np.random.randn(158, 24, 550)
 
-	
+	a, b = sample_train_data(temp_A, temp_B)
+	print(a.shape, b.shape)

@@ -1,4 +1,5 @@
 import numpy as np
+import random
 import matplotlib as plt
 import librosa
 from librosa.core import load
@@ -6,6 +7,8 @@ import os
 import torch
 import torchaudio
 import copy
+from torch.autograd import Variable
+
 
 def mkdir(paths):
 	for path in paths:
@@ -64,13 +67,12 @@ def normalize(tensor):
 
 def spec_wav(specgram, filename):
 	# Return the all-zero vector with the same shape of `a_content`
-    a = np.exp(spectrum) - 1
-    p = 2 * np.pi * np.random.random_sample(spectrum.shape) - np.pi
-    for i in range(50):
-        S = a * np.exp(1j * p)
-        x = librosa.istft(S)
-        p = np.angle(librosa.stft(x, N_FFT))
-    librosa.output.write_wav(outfile, x, sr)
+    a = np.exp(specgram.cpu().detach().numpy()) - 1
+    p = 2 * np.pi * np.random.random_sample(specgram.shape) - np.pi
+    
+    x = librosa.griffinlim(a)
+    p = np.angle(librosa.stft(x, 400))
+    librosa.output.write_wav(filename, x, sr=22050)
 
 def compute_content_loss(a_C, a_G):
 	"""
@@ -124,28 +126,35 @@ def gram_over_time_axis(A):
 
 # To store 50 generated files in a pool and sample from it when it is full
 # Shrivastava et al’s strategy
-class Sample_from_Pool(object):
-	def __init__(self, max_elements=50):
-		self.max_elements = max_elements
-		self.cur_elements = 0
-		self.items = []
+class ImagePool():
+    def __init__(self, pool_size):
+        self.pool_size = pool_size
+        if self.pool_size > 0:
+            self.num_imgs = 0
+            self.images = []
 
-	def __call__(self, in_items):
-		return_items = []
-		for in_item in in_items:
-			if self.cur_elements < self.max_elements:
-				self.items.append(in_item)
-				self.cur_elements = self.cur_elements + 1
-				return_items.append(in_item)
-			else:
-				if np.random.ranf() > 0.5:
-					idx = np.random.randint(0, self.max_elements)
-					tmp = copy.copy(self.items[idx])
-					self.items[idx] = in_item
-					return_items.append(tmp)
-				else:
-					return_items.append(in_item)
-		return return_items
+    def query(self, images):
+        if self.pool_size == 0:
+            return images
+        return_images = []
+        for image in images.data:
+            image = torch.unsqueeze(image, 0)
+            if self.num_imgs < self.pool_size:
+                self.num_imgs = self.num_imgs + 1
+                self.images.append(image)
+                return_images.append(image)
+            else:
+                p = random.uniform(0, 1)
+                if p > 0.5:
+                    random_id = random.randint(0, self.pool_size-1)
+                    tmp = self.images[random_id].clone()
+                    self.images[random_id] = image
+                    return_images.append(tmp)
+                else:
+                    return_images.append(image)
+        return_images = Variable(torch.cat(return_images, 0))
+        return return_images
+
 
 
 class LambdaLR():
